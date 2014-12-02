@@ -1,0 +1,147 @@
+/**
+ * Configuration for Sonar Qube integration both for the runner and for manual override of 
+ * gradle generated properties for multi-module projects with source at parent levels.
+ * Originally we tried to use the sonarProperties DSL as much as possible for future
+ * proofing, but there were unintential side-effects and deprecation warnings for gradle 3.0,
+ * so most of the work is now done in the post refactoring of the sonar-project.properties.
+ * Intended usage:
+ * 1. gradle sonarRunner -Psonar.analysis.mode=preview (effectively a dry run and ignores errors)
+ * 2. gradle refactorSonarProperties (to fix and fudge the properties to make all modules leaf nodes
+ * 3. copy build/tmp/sonarRunner/sonar-project.properties into the root of the project
+ * 4. sonar-runner (manual invocation of the sonar runner)
+ * 5. delete the root's sonar-project.properties
+ * If Gradle ever matches Sonar's project structure or vice versa this can be replaced with direct
+ * gradle configuration and sonarRunner without preview (i.e. persist the results via the gradle call).
+ * 
+ * @author hallatech
+ *
+ */
+
+apply plugin: 'sonar-runner'
+
+sonarRunner {
+  toolVersion = '2.4'
+  sonarProperties {
+    // Values picked up from CI's /home/<user>/.gradle/gradle.properties for the CI's local MySQL
+    property "sonar.jdbc.dialect",'mysql'
+    property "sonar.jdbc.username",sonarUsername
+    property "sonar.jdbc.password",sonarPassword
+    property "sonar.jdbc.url",sonarJDBCUrl
+  }
+}
+
+def leafNodeModules=[]
+def projectPathsToSkip=[]
+def projectsToSkip=[]
+
+//Find projects that don't have source to skip
+subprojects.each {
+  def hasSource = (it.sourceSets.main.java.getSrcDirs()[0].list()) ? true : false
+  if (!hasSource) {
+    projectsToSkip << it.toString() - "project '" -"'"
+  }
+}
+
+//Set up the skipped project paths. Don't use sonarRunner.skipProject=true because it will skip the children in some cases as well
+projectsToSkip.each {p->
+  project(p) {
+    project.logger.debug "Skipping sonarRunner for $p"
+    projectPathsToSkip<<"${p.substring(1).replaceAll(':','.')}"
+//    sonarRunner.skipProject=true
+  }
+}
+
+subprojects {
+  def projectNamedPath="${rootProject.name}.${project.name}"
+  def parentPath=[]
+  def currentProject=project
+  while (currentProject.parent.name != rootProject.name) {
+    parentPath<<currentProject.parent.name
+    currentProject=currentProject.parent
+  }
+  projectNamedPath=(parentPath) ? "${rootProject.name}.${parentPath.reverse().join('.')}.${project.name}" : "${rootProject.name}.${project.name}"
+  project.logger.debug "Project: ${project}, path=[${projectNamedPath}]"
+  sonarRunner {
+    //Change the name to include the root project's name as prefix
+    sonarProperties {
+      property "sonar.projectName",projectNamedPath
+    }
+  }
+  //Find any child projects that are parents to later remove their modules
+  def skipProject = (projectsToSkip.find {project.getPath() in it}) ? true : false
+  if (!project.getParent().getPath().equals(rootProject.getPath()) && !skipProject) {
+    leafNodeModules<<"${projectNamedPath}"
+  }
+}
+
+task refactorSonarProperties {
+  description="Modifies the sonar modules into leaf nodes from a gradle generated sonar-project.properties"
+  group="Verification"
+  doLast {
+    def sonarFile = new File("${buildDir}/tmp/sonarRunner/sonar-project.properties")
+    assert sonarFile.exists(), "Expected file ${sonarFile.toString()} does not exist. Run the sonarRunner task first."
+    def sonarProps = new Properties()
+    sonarProps.load(sonarFile.newDataInputStream())
+    //Collect root properties for dummy copy
+    def rootModuleSonarProps = [:]
+    def rootOriginSonarProps = [:]
+    sonarProps.findAll{k,v->k.startsWith("sonar.")}.each { k,v->
+      boolean exclude=false
+      ["environment","jdbc","modules","projectKey","working.directory"].each {
+        if (k.contains(it)) {
+          exclude=true
+        }
+      }
+      if (exclude) {
+        rootOriginSonarProps.put(k,v)
+      }
+      else {
+        rootModuleSonarProps.put("${rootProject.name}.${k}".toString(), v)
+      }
+      
+    }
+    //Add the dummy root module properties back via root module as a leaf node in bulk
+    sonarProps.putAll(rootModuleSonarProps)
+    //Remove the properties of the root module that make it look like src module
+    def rootSrcModuleProps=[:]
+    sonarProps.findAll{k,v->k.startsWith("sonar.")}.each {k,v->
+      if (!rootOriginSonarProps.get(k) && !(k.startsWith("sonar.project"))) {
+        sonarProps.remove(k)
+      }
+    }
+    //Update the root's modules property to only include valid source code leaf node projects
+    def rootModules=sonarProps.getProperty('sonar.modules').split(',').collect{it="${rootProject.name}.${it}"}.join(',')
+    def newRootModules=[]
+    rootModules.split(',').each {
+      def module= it - "${rootProject.name}."
+      def skipProject = (projectPathsToSkip.find {module in it}) ? true : false
+      if (!skipProject) {
+        newRootModules << it
+      }
+    }
+    project.logger.debug "Setting sonar.modules=${rootProject.name},${newRootModules.join(',')},${leafNodeModules.join(',')}"
+    sonarProps.setProperty('sonar.modules', "${rootProject.name},${newRootModules.join(',')},${leafNodeModules.join(',')}")
+    //Remove any sub-parent modules with pattern <project>.sonar.modules
+    sonarProps.findAll{k,v->k.contains(".sonar.modules")}.each {k,v->
+      sonarProps.remove(k)
+    }
+    //Rewrite all properties with the root module appended except real and fake root
+    sonarProps.findAll{k,v-> !k.startsWith("sonar.") && !k.startsWith("${rootProject.name}.")}.each {k,v->
+      sonarProps.remove(k)
+      sonarProps.setProperty("${rootProject.name}.${k}",v)
+    }
+    //Remove any now empty properties
+    sonarProps.findAll{k,v->v.empty}.each {k,v->
+      sonarProps.remove(k)
+    }
+    //Remove preview so results are persisted
+    sonarProps.findAll{k,v->k.equals('sonar.analysis.mode')}.each {k,v->
+      sonarProps.remove(k)
+    }
+    //Output to source file
+    sonarProps.store(sonarFile.newWriter(), null)
+  }
+}
+
+
+
