@@ -25,16 +25,16 @@ named module)
 
 Configuration and Execution
 ---------------------------
-1. Include this file into your build e.g. copy into gradle sub-directory
+1. Include this file into your build e.g. copy into gradle sub-directory  
 ``apply from: 'gradle/sonar.gradle'``
-2. Execute the default gradle sonar-runner task but in preview mode (i.e. doesn't persist results to the database)
+2. Execute the default gradle sonar-runner task but in preview mode (i.e. doesn't persist results to the database)  
 ``gradle sonarRunner -Dsonar.analysis.mode=preview``
-3. Refactor the generated properties file
+3. Refactor the generated properties file  
 ``gradle refactorSonarProperties``
-4. Copy the file to the root of the project (Assumes you are in the root)
+4. Copy the file to the root of the project (Assumes you are in the root)  
 ``cp build/tmp/sonarRunner/sonar-project.properties .``
-5. Execute the pre-installed sonar-runner (See sonar runner installation)
+5. Execute the pre-installed sonar-runner (See sonar runner installation)  
 ``sonar-runner``
-6. Delete the properties. If you leave it here it will interfere with the next gradle sonarRunner execution
+6. Delete the properties. If you leave it here it will interfere with the next gradle sonarRunner execution  
 ``rm sonar-project.properties``
 
