@@ -18,7 +18,8 @@ future deprecation warnings for Gradle 3.0
 
 5. We need to exclude those sub-projects which don't have source code as well as exclude the root project as a source project (for Sonar)
 
-6. We want to see the modules in SonarQube named accordingly to the pattern <rootProject.name>.[<(sub)project.name>...].<(leaf)project.name>
+6. We want to see the modules in SonarQube named accordingly to the pattern  
+``<rootProject.name>.[<(sub)project.name>...].<(leaf)project.name>``
 
 7. We need to make all source code sub-projects appear as a leaf-node project including the root project itself (by copying root as a
 named module)
